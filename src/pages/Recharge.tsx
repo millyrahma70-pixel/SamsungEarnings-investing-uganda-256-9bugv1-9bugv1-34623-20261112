@@ -21,7 +21,6 @@ const Recharge = () => {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [submitting, setSubmitting] = useState(false);
   const [reference, setReference] = useState('');
-  const [paymentUrl, setPaymentUrl] = useState<string | null>(null);
 
   useEffect(() => {
     const currentUser = getCurrentUser();
@@ -48,6 +47,7 @@ const Recharge = () => {
   };
 
   const handleSubmit = async () => {
+    if (submitting) return;
     if (!user) {
       toast.error('Please log in again.');
       navigate('/login');
@@ -73,26 +73,16 @@ const Recharge = () => {
       });
 
       setReference(result.reference);
-      setPaymentUrl(result.paymentUrl);
       setStep(3);
-      toast.success('Payment request started.');
+      toast.success('Recharge request submitted for admin processing.');
     } catch (error) {
-      console.error('Unable to start recharge:', error);
+      console.error('Unable to submit recharge:', error);
       toast.error(
-        error instanceof Error ? error.message : 'Unable to start payment.',
+        error instanceof Error ? error.message : 'Unable to submit recharge request.',
       );
     } finally {
       setSubmitting(false);
     }
-  };
-
-  const openPayment = () => {
-    if (!paymentUrl) {
-      toast.error('No payment link was returned. Please contact support.');
-      return;
-    }
-
-    window.location.assign(paymentUrl);
   };
 
   return (
@@ -186,9 +176,14 @@ const Recharge = () => {
               {formatUGX(Number(amount))}
             </p>
             <p className="mt-2 text-sm text-blue-100">
-              {network === 'mtn' ? 'MTN MoMo' : 'Airtel Money'} via PesaJet
+              {network === 'mtn' ? 'MTN MoMo' : 'Airtel Money'} — admin-managed PesaJet prompt
             </p>
           </div>
+
+          <p className="text-base leading-relaxed">
+            Submit a request for the admin to send a PesaJet payment prompt.
+            This website does not send the prompt automatically or collect your mobile money PIN.
+          </p>
 
           <div>
             <label
@@ -245,7 +240,7 @@ const Recharge = () => {
               }}
             >
               {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-              {submitting ? 'Starting payment…' : 'Pay with PesaJet'}
+              {submitting ? 'Submitting…' : 'Request payment prompt'}
             </button>
           </div>
         </main>
@@ -258,11 +253,12 @@ const Recharge = () => {
           </div>
 
           <h2 className="mb-2 text-xl font-bold text-gray-800">
-            Payment request started
+            Recharge request submitted
           </h2>
           <p className="mb-6 text-center text-sm leading-relaxed text-gray-500">
-            Complete the payment with your mobile money account. Your recharge
-            should only be credited after the payment is confirmed.
+            Your request is saved and awaiting admin processing. The admin must
+            send the PesaJet prompt manually. Complete payment only through your
+            mobile money provider; your balance updates after admin confirmation.
           </p>
 
           <div className="mb-4 w-full space-y-3 rounded-2xl bg-white p-5 shadow-sm">
@@ -295,18 +291,6 @@ const Recharge = () => {
           </div>
 
           <div className="w-full space-y-2">
-            {paymentUrl && (
-              <button
-                type="button"
-                onClick={openPayment}
-                className="w-full rounded-xl py-4 text-base font-bold text-white"
-                style={{
-                  background: 'linear-gradient(135deg, #1d4ed8, #3b82f6)',
-                }}
-              >
-                Continue to payment
-              </button>
-            )}
             <button
               type="button"
               onClick={() => navigate('/records')}
