@@ -9,7 +9,7 @@ import {
   getUserRecharges,
   getUserById,
 } from '@/lib/storage';
-import { PACKAGES, PackageGroup } from '@/constants/packages';
+import { PACKAGES } from '@/constants/packages';
 import type { User, Recharge } from '@/types';
 
 const Product = () => {
@@ -98,9 +98,9 @@ const Product = () => {
   });
 
   const groupColors: Record<string, { bg: string; badge: string; text: string }> = {
-    [PackageGroup.Starter]: { bg: 'from-green-500 to-green-600', badge: 'bg-green-100 text-green-700', text: 'text-green-600' },
-    [PackageGroup.Growth]: { bg: 'from-blue-500 to-blue-700', badge: 'bg-blue-100 text-blue-700', text: 'text-blue-600' },
-    [PackageGroup.Premium]: { bg: 'from-purple-600 to-purple-800', badge: 'bg-purple-100 text-purple-700', text: 'text-purple-600' },
+    1: { bg: 'from-green-500 to-green-600', badge: 'bg-green-100 text-green-700', text: 'text-green-600' },
+    2: { bg: 'from-blue-500 to-blue-700', badge: 'bg-blue-100 text-blue-700', text: 'text-blue-600' },
+    3: { bg: 'from-purple-600 to-purple-800', badge: 'bg-purple-100 text-purple-700', text: 'text-purple-600' },
   };
 
   return (
@@ -148,13 +148,14 @@ const Product = () => {
       {/* Package groups */}
       <div className="px-4 py-4 space-y-6 pb-24">
         {Object.entries(groupedPackages).map(([group, pkgs]) => {
-          const colors = groupColors[group] || groupColors[PackageGroup.Starter];
+          const colors = groupColors[group] || groupColors[1];
+          const durations = [...new Set(pkgs.map(pkg => pkg.duration))].sort((a, b) => a - b);
           return (
             <div key={group}>
               <div className={`bg-gradient-to-r ${colors.bg} text-white rounded-xl px-4 py-3 mb-3`}>
-                <h2 className="font-bold text-lg">{group}</h2>
+                <h2 className="font-bold text-lg">Group {group}</h2>
                 <p className="text-xs text-white text-opacity-80 mt-0.5">
-                  {group === PackageGroup.Premium ? '30-day duration' : group === PackageGroup.Growth ? '90-day duration' : '60-day duration'}
+                  {durations.join(' / ')}-day plans
                 </p>
               </div>
 
@@ -165,7 +166,7 @@ const Product = () => {
                       <div className="flex items-start justify-between">
                         <div>
                           <h3 className="font-semibold text-gray-800 text-sm">{pkg.name}</h3>
-                          <span className={`inline-block text-xs px-2 py-0.5 rounded-full mt-1 ${colors.badge}`}>{group}</span>
+                          <span className={`inline-block text-xs px-2 py-0.5 rounded-full mt-1 ${colors.badge}`}>Group {group}</span>
                         </div>
                         <div className="text-right">
                           <p className="text-xs text-gray-400">Price</p>
