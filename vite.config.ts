@@ -1,17 +1,19 @@
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react-swc';
-import { fileURLToPath, URL } from 'node:url';
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react-swc";
+import path from "path";
 
 export default defineConfig({
-  base: '/The-Engle-investment-/',
-  plugins: [react()],
+  base: "/SamsungEarnings-investing-uganda-256-9bugv1-9bugv1-34623-20261112/",
+  server: {
+    host: "::",
+    port: 8080,
+  },
+  plugins: [
+    react(),
+  ],
   resolve: {
     alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url)),
+      "@": path.resolve(__dirname, "./src"),
     },
-  },
-  server: {
-    host: '0.0.0.0',
-    port: 8080,
   },
 });
