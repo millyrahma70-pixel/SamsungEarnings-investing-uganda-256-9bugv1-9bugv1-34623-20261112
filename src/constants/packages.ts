@@ -16,9 +16,8 @@ export interface Package {
   image: string;
 }
 
-export const PACKAGES: Package[] = [
-  // ── Group 1: Starter ──────────────────────────────────────────────────────
-  {
+// No package entries remain after the GitHub edit.
+export const PACKAGES: Package[] = [];
 
 
 // ─── Financial Constants ───────────────────────────────────────────────────────
