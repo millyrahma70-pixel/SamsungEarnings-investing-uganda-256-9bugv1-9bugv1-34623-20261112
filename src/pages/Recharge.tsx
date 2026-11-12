@@ -1,231 +1,331 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ArrowLeft, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-import {
-  getCurrentUser, refreshCurrentUser, createRecharge, getUserRecharges,
-} from '@/lib/storage';
-import { Recharge } from '@/types';
-import { MTN_NUMBER, MTN_NAME, AIRTEL_NUMBER, AIRTEL_NAME, MIN_DEPOSIT } from '@/constants/packages';
 
-const fmt = (n: number) => `UGX ${Number(n).toLocaleString()}`;
+import { getCurrentUser, startRechargePayment } from '@/lib/storage';
+import { formatUGX } from '@/lib/utils';
+import { MIN_DEPOSIT } from '@/constants/packages';
+import type { User } from '@/types';
 
-const RechargePage = () => {
+type Network = 'mtn' | 'airtel';
+
+const Recharge = () => {
   const navigate = useNavigate();
-  const [user, setUser] = useState(getCurrentUser());
-  const [recharges, setRecharges] = useState<Recharge[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
 
-  const [network, setNetwork] = useState<'mtn' | 'airtel'>('mtn');
+  const [user, setUser] = useState<User | null>(null);
   const [amount, setAmount] = useState('');
+  const [network, setNetwork] = useState<Network>('mtn');
   const [senderPhone, setSenderPhone] = useState('');
   const [senderName, setSenderName] = useState('');
-  const [proof, setProof] = useState('');
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [submitting, setSubmitting] = useState(false);
+  const [reference, setReference] = useState('');
+  const [paymentUrl, setPaymentUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!user) { navigate('/login'); return; }
-    loadData();
-  }, []);
+    const currentUser = getCurrentUser();
 
-  const loadData = async () => {
-    const freshUser = await refreshCurrentUser();
-    if (!freshUser) { navigate('/login'); return; }
-    setUser(freshUser);
-    const r = await getUserRecharges(freshUser.id);
-    setRecharges(r);
-    setLoading(false);
+    if (!currentUser) {
+      navigate('/login');
+      return;
+    }
+
+    setUser(currentUser);
+    setSenderPhone(currentUser.phone ?? '');
+    setSenderName(currentUser.name ?? '');
+  }, [navigate]);
+
+  const handleContinue = () => {
+    const parsedAmount = Number(amount);
+
+    if (!Number.isSafeInteger(parsedAmount) || parsedAmount < MIN_DEPOSIT) {
+      toast.error(`Minimum deposit is ${formatUGX(MIN_DEPOSIT)}`);
+      return;
+    }
+
+    setStep(2);
   };
 
   const handleSubmit = async () => {
-    if (!user) return;
-    const amt = parseFloat(amount);
-    if (isNaN(amt) || amt < MIN_DEPOSIT) {
-      toast.error(`Minimum recharge is ${fmt(MIN_DEPOSIT)}`);
+    if (!user) {
+      toast.error('Please log in again.');
+      navigate('/login');
       return;
     }
-    if (!senderPhone.trim()) {
-      toast.error('Enter the sender phone number');
-      return;
-    }
-    if (!senderName.trim()) {
-      toast.error('Enter the sender name');
+
+    if (!senderPhone.trim() || !senderName.trim()) {
+      toast.error('Enter the mobile money phone number and account name.');
       return;
     }
 
     setSubmitting(true);
-    const recharge: Recharge = {
-      id: crypto.randomUUID(),
-      userId: user.id,
-      userName: user.name,
-      userPhone: user.phone,
-      amount: amt,
-      network,
-      senderPhone: senderPhone.trim(),
-      senderName: senderName.trim(),
-      proof: proof.trim(),
-      status: 'pending',
-      createdAt: new Date().toISOString(),
-      processedAt: null,
-    };
 
-    await createRecharge(recharge);
-    toast.success('Recharge submitted! Awaiting admin approval.');
-    setAmount('');
-    setSenderPhone('');
-    setSenderName('');
-    setProof('');
-    setSubmitting(false);
-    await loadData();
+    try {
+      const result = await startRechargePayment({
+        amount: Number(amount),
+        network,
+        senderPhone: senderPhone.trim(),
+        senderName: senderName.trim(),
+        userId: user.id,
+        userName: user.name,
+        userPhone: user.phone,
+      });
+
+      setReference(result.reference);
+      setPaymentUrl(result.paymentUrl);
+      setStep(3);
+      toast.success('Payment request started.');
+    } catch (error) {
+      console.error('Unable to start recharge:', error);
+      toast.error(
+        error instanceof Error ? error.message : 'Unable to start payment.',
+      );
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  if (!user) return null;
+  const openPayment = () => {
+    if (!paymentUrl) {
+      toast.error('No payment link was returned. Please contact support.');
+      return;
+    }
 
-  const depositTarget = network === 'mtn'
-    ? { number: MTN_NUMBER, name: MTN_NAME, label: 'MTN Mobile Money' }
-    : { number: AIRTEL_NUMBER, name: AIRTEL_NAME, label: 'Airtel Money' };
+    window.location.assign(paymentUrl);
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
-      {/* Header */}
-      <div className="bg-blue-900 text-white px-4 py-4 flex items-center gap-3 shadow">
-        <button onClick={() => navigate(-1)} className="p-1">
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
+    <div className="app-container min-h-screen bg-gray-50">
+      <header className="flex items-center border-b border-gray-100 bg-white px-4 py-4">
+        <button
+          type="button"
+          onClick={() => navigate(-1)}
+          className="mr-3"
+          aria-label="Go back"
+        >
+          <ArrowLeft className="h-6 w-6 text-gray-700" />
         </button>
-        <h1 className="text-lg font-bold">Recharge Balance</h1>
-      </div>
+        <h1 className="text-lg font-bold text-gray-800">Recharge</h1>
+      </header>
 
-      <div className="p-4 space-y-4">
-        {/* Instructions */}
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-          <div className="font-semibold text-blue-800 text-sm mb-2">📱 How to Recharge</div>
-          <ol className="text-blue-700 text-xs space-y-1 list-decimal list-inside">
-            <li>Select your network (MTN or Airtel)</li>
-            <li>Send money to the number shown below</li>
-            <li>Fill in the form and submit for admin approval</li>
-            <li>Your balance will be updated once approved</li>
-          </ol>
-        </div>
+      {step === 1 && (
+        <main className="space-y-4 px-4 py-5">
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+            <p className="text-sm font-medium text-amber-700">
+              Minimum deposit: {formatUGX(MIN_DEPOSIT)}
+            </p>
+            <p className="mt-1 text-xs text-amber-600">
+              Choose a payment network and amount to continue.
+            </p>
+          </div>
 
-        {/* Network Selection */}
-        <div className="bg-white rounded-xl shadow p-4">
-          <h2 className="font-semibold text-gray-800 mb-3">Select Network</h2>
-          <div className="flex gap-3">
-            <button
-              onClick={() => setNetwork('mtn')}
-              className={`flex-1 py-3 rounded-xl text-sm font-semibold transition border-2 ${
-                network === 'mtn' ? 'border-yellow-400 bg-yellow-50 text-yellow-800' : 'border-gray-200 bg-gray-50 text-gray-600'
-              }`}
+          <div>
+            <label
+              htmlFor="amount"
+              className="mb-2 block text-sm font-medium text-gray-600"
             >
-              <div className="text-lg mb-0.5">📲</div>
-              MTN Mobile Money
-            </button>
-            <button
-              onClick={() => setNetwork('airtel')}
-              className={`flex-1 py-3 rounded-xl text-sm font-semibold transition border-2 ${
-                network === 'airtel' ? 'border-red-400 bg-red-50 text-red-800' : 'border-gray-200 bg-gray-50 text-gray-600'
-              }`}
-            >
-              <div className="text-lg mb-0.5">📲</div>
-              Airtel Money
-            </button>
-          </div>
-        </div>
-
-        {/* Deposit Target */}
-        <div className={`rounded-xl p-4 shadow ${network === 'mtn' ? 'bg-yellow-400' : 'bg-red-500'}`}>
-          <div className="text-white text-xs font-medium mb-1">Send payment to:</div>
-          <div className="text-white font-bold text-2xl tracking-wider">{depositTarget.number}</div>
-          <div className="text-white/90 text-sm">{depositTarget.name}</div>
-          <div className="text-white/70 text-xs mt-1">{depositTarget.label}</div>
-        </div>
-
-        {/* Form */}
-        <div className="bg-white rounded-xl shadow p-4 space-y-3">
-          <h2 className="font-semibold text-gray-800">Recharge Details</h2>
-
-          <div>
-            <label className="text-xs text-gray-500 font-medium mb-1 block">Amount (UGX)</label>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-medium">UGX</span>
-              <input
-                type="number"
-                value={amount}
-                onChange={e => setAmount(e.target.value)}
-                placeholder={`Min ${fmt(MIN_DEPOSIT)}`}
-                className="w-full border rounded-lg pl-14 pr-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs text-gray-500 font-medium mb-1 block">Sender Phone Number</label>
+              Amount (UGX)
+            </label>
             <input
-              type="tel"
-              value={senderPhone}
-              onChange={e => setSenderPhone(e.target.value)}
-              placeholder="Phone number used to send"
-              className="w-full border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              id="amount"
+              type="number"
+              min={MIN_DEPOSIT}
+              step="1"
+              inputMode="numeric"
+              value={amount}
+              onChange={(event) => setAmount(event.target.value)}
+              placeholder={`Minimum ${formatUGX(MIN_DEPOSIT)}`}
+              className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-base text-gray-800 outline-none"
             />
           </div>
 
-          <div>
-            <label className="text-xs text-gray-500 font-medium mb-1 block">Sender Name</label>
-            <input
-              type="text"
-              value={senderName}
-              onChange={e => setSenderName(e.target.value)}
-              placeholder="Name on the mobile money account"
-              className="w-full border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          <div>
-            <label className="text-xs text-gray-500 font-medium mb-1 block">Transaction Reference (optional)</label>
-            <input
-              type="text"
-              value={proof}
-              onChange={e => setProof(e.target.value)}
-              placeholder="Transaction ID or proof"
-              className="w-full border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          <button
-            onClick={handleSubmit}
-            disabled={submitting}
-            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition"
-          >
-            {submitting ? 'Submitting...' : 'Submit Recharge'}
-          </button>
-        </div>
-
-        {/* History */}
-        {!loading && recharges.length > 0 && (
-          <div className="bg-white rounded-xl shadow p-4">
-            <h2 className="font-semibold text-gray-800 mb-3">Recharge History</h2>
-            <div className="space-y-3">
-              {recharges.slice(0, 10).map(r => (
-                <div key={r.id} className="flex items-center justify-between py-2 border-b last:border-0">
-                  <div>
-                    <div className="text-sm font-medium text-gray-800">{fmt(r.amount)}</div>
-                    <div className="text-xs text-gray-500 uppercase">{r.network} · {r.senderPhone}</div>
-                    <div className="text-xs text-gray-400">{new Date(r.createdAt).toLocaleDateString()}</div>
-                  </div>
-                  <span className={`text-xs px-2 py-1 rounded-full font-medium ${
-                    r.status === 'approved' ? 'bg-green-100 text-green-700'
-                    : r.status === 'pending' ? 'bg-yellow-100 text-yellow-700'
-                    : 'bg-red-100 text-red-700'
-                  }`}>{r.status}</span>
-                </div>
+          <fieldset>
+            <legend className="mb-2 block text-sm font-medium text-gray-600">
+              Mobile money network
+            </legend>
+            <div className="grid grid-cols-2 gap-3">
+              {(['mtn', 'airtel'] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={network === option}
+                  onClick={() => setNetwork(option)}
+                  className={`rounded-xl border-2 py-3 text-sm font-semibold transition-colors ${
+                    network === option
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-200 bg-white text-gray-600'
+                  }`}
+                >
+                  {option === 'mtn' ? 'MTN MoMo' : 'Airtel Money'}
+                </button>
               ))}
             </div>
+          </fieldset>
+
+          <button
+            type="button"
+            onClick={handleContinue}
+            className="w-full rounded-xl py-4 text-base font-bold text-white"
+            style={{
+              background: 'linear-gradient(135deg, #1d4ed8, #3b82f6)',
+            }}
+          >
+            Continue
+          </button>
+        </main>
+      )}
+
+      {step === 2 && (
+        <main className="space-y-4 px-4 py-5">
+          <div className="rounded-2xl p-5 text-white" style={{
+            background: 'linear-gradient(135deg, #0a0f2e, #1d4ed8)',
+          }}>
+            <p className="text-sm text-white/75">Recharge amount</p>
+            <p className="mt-1 text-2xl font-bold">
+              {formatUGX(Number(amount))}
+            </p>
+            <p className="mt-2 text-sm text-blue-100">
+              {network === 'mtn' ? 'MTN MoMo' : 'Airtel Money'} via PesaJet
+            </p>
           </div>
-        )}
-      </div>
+
+          <div>
+            <label
+              htmlFor="sender-phone"
+              className="mb-2 block text-sm font-medium text-gray-600"
+            >
+              Mobile money phone number
+            </label>
+            <input
+              id="sender-phone"
+              type="tel"
+              autoComplete="tel"
+              value={senderPhone}
+              onChange={(event) => setSenderPhone(event.target.value)}
+              placeholder="07XXXXXXXX"
+              className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-base text-gray-800 outline-none"
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="sender-name"
+              className="mb-2 block text-sm font-medium text-gray-600"
+            >
+              Account name
+            </label>
+            <input
+              id="sender-name"
+              type="text"
+              autoComplete="name"
+              value={senderName}
+              onChange={(event) => setSenderName(event.target.value)}
+              placeholder="Name on the mobile money account"
+              className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-base text-gray-800 outline-none"
+            />
+          </div>
+
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setStep(1)}
+              disabled={submitting}
+              className="flex-1 rounded-xl border border-gray-200 py-4 font-semibold text-gray-600 disabled:opacity-60"
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={submitting}
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl py-4 font-bold text-white disabled:opacity-60"
+              style={{
+                background: 'linear-gradient(135deg, #1d4ed8, #3b82f6)',
+              }}
+            >
+              {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+              {submitting ? 'Starting payment…' : 'Pay with PesaJet'}
+            </button>
+          </div>
+        </main>
+      )}
+
+      {step === 3 && (
+        <main className="flex flex-col items-center px-4 py-8">
+          <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-amber-100">
+            <span className="text-4xl" aria-hidden="true">⏳</span>
+          </div>
+
+          <h2 className="mb-2 text-xl font-bold text-gray-800">
+            Payment request started
+          </h2>
+          <p className="mb-6 text-center text-sm leading-relaxed text-gray-500">
+            Complete the payment with your mobile money account. Your recharge
+            should only be credited after the payment is confirmed.
+          </p>
+
+          <div className="mb-4 w-full space-y-3 rounded-2xl bg-white p-5 shadow-sm">
+            <div className="flex justify-between gap-4 text-sm">
+              <span className="text-gray-400">Amount</span>
+              <span className="font-bold text-gray-800">
+                {formatUGX(Number(amount))}
+              </span>
+            </div>
+            <div className="flex justify-between gap-4 text-sm">
+              <span className="text-gray-400">Network</span>
+              <span className="font-medium text-gray-800">
+                {network === 'mtn' ? 'MTN MoMo' : 'Airtel Money'}
+              </span>
+            </div>
+            <div className="flex justify-between gap-4 text-sm">
+              <span className="text-gray-400">Phone</span>
+              <span className="font-medium text-gray-800">{senderPhone}</span>
+            </div>
+            <div className="flex justify-between gap-4 text-sm">
+              <span className="text-gray-400">Reference</span>
+              <span className="break-all text-right font-medium text-gray-800">
+                {reference}
+              </span>
+            </div>
+            <div className="flex justify-between gap-4 text-sm">
+              <span className="text-gray-400">Status</span>
+              <span className="font-bold text-amber-700">Pending</span>
+            </div>
+          </div>
+
+          <div className="w-full space-y-2">
+            {paymentUrl && (
+              <button
+                type="button"
+                onClick={openPayment}
+                className="w-full rounded-xl py-4 text-base font-bold text-white"
+                style={{
+                  background: 'linear-gradient(135deg, #1d4ed8, #3b82f6)',
+                }}
+              >
+                Continue to payment
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => navigate('/records')}
+              className="w-full rounded-xl border border-gray-200 py-3 text-sm font-semibold text-gray-600"
+            >
+              Check recharge status
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/home')}
+              className="w-full py-3 text-sm font-semibold text-gray-600"
+            >
+              Back to Home
+            </button>
+          </div>
+        </main>
+      )}
     </div>
   );
 };
 
-export default RechargePage;
+export default Recharge;
