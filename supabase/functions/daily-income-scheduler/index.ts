@@ -1,97 +1,170 @@
+/**
+ * daily-income-scheduler
+ *
+ * Runs the daily income engine for all active Engle packages.
+ * - Can be triggered via HTTP POST (e.g., from admin or cron services)
+ * - Designed to be safe to call multiple times per day (24-hr guard built-in)
+ *
+ * Cron: every day at 21:00 UTC = midnight Uganda time (EAT = UTC+3)
+ */
+
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
 
+interface Product {
+  id: string;
+  user_id: string;
+  package_name: string;
+  daily_income: number;
+  status: string;
+  expiry_date: string;
+  last_income_date: string | null;
+  total_income_earned: number;
+}
+
+interface User {
+  id: string;
+  balance: number;
+  total_earnings: number;
+  daily_earnings: number;
+}
+
 Deno.serve(async (req: Request) => {
-  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
+  const authHeader = req.headers.get('x-scheduler-secret');
+  const schedulerSecret = Deno.env.get('SCHEDULER_SECRET');
+  if (schedulerSecret && authHeader !== schedulerSecret) {
+    console.error('Unauthorized scheduler call — invalid secret');
+    return new Response(
+      JSON.stringify({ error: 'Unauthorized' }),
+      { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
+  }
 
   const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    Deno.env.get('SUPABASE_URL') ?? '',
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
   );
 
   const now = new Date();
-  // Uganda date = UTC+3
-  const ugandaNow = new Date(now.getTime() + 3*60*60*1000);
-  const todayUganda = ugandaNow.toISOString().split('T')[0]; // 2026-05-13
-
-  console.log(`[DAILY INCOME] Starting for Uganda date: ${todayUganda}`);
-
-  const { data: products } = await supabase.from('user_products').select('*').eq('status', 'active');
+  console.log(`[daily-income-scheduler] Running at ${now.toISOString()} (Uganda midnight EAT)`);
 
   let credited = 0;
   let total = 0;
+  const errors: string[] = [];
 
-  for (const product of products || []) {
-    // 1. Expired?
-    if (product.expiry_date && new Date(product.expiry_date) < now) {
-      await supabase.from('user_products').update({ status: 'expired' }).eq('id', product.id);
-      continue;
-    }
+  // ── Fetch all active products ──────────────────────────────────────────────
+  const { data: products, error: prodErr } = await supabase
+    .from('engle_products')
+    .select('id, user_id, package_name, daily_income, status, expiry_date, last_income_date, total_income_earned')
+    .eq('status', 'active');
 
-    const dailyIncome = Number(product.daily_income || 0);
-    if (dailyIncome <= 0) continue;
-
-    // 2. CHECK: Did this product already get paid TODAY? (Uganda date)
-    // Look in transactions for today
-    const { data: alreadyPaid } = await supabase
-      .from('transactions')
-      .select('id')
-      .eq('user_id', product.user_id)
-      .eq('type', 'income')
-      .ilike('description', `%${product.id}%`)
-      .gte('created_at', `${todayUganda}T00:00:00`)
-      .lte('created_at', `${todayUganda}T23:59:59`);
-
-    // Better check: by last_income_date Uganda day
-    let lastPaidUganda = null;
-    if (product.last_income_date) {
-      const last = new Date(new Date(product.last_income_date).getTime() + 3*60*60*1000);
-      lastPaidUganda = last.toISOString().split('T')[0];
-    }
-
-    if (lastPaidUganda === todayUganda) {
-      console.log(`Already paid today ${product.id} for ${todayUganda}`);
-      continue;
-    }
-
-    // 3. GET USER
-    const { data: user } = await supabase.from('users').select('*').eq('id', product.user_id).single();
-    if (!user) continue;
-
-    // 4. PAY - MUST RECEIVE EVERYDAY
-    console.log(`PAYING UGX ${dailyIncome} to ${user.phone} for product ${product.id}`);
-
-    // Add to balance
-    await supabase.from('users').update({
-      balance: Number(user.balance) + dailyIncome,
-      total_earnings: Number(user.total_earnings || 0) + dailyIncome,
-      cumulative_income: Number(user.cumulative_income || 0) + dailyIncome
-    }).eq('id', user.id);
-
-    // Update product last income
-    await supabase.from('user_products').update({
-      last_income_date: now.toISOString(),
-      total_income_earned: Number(product.total_income_earned || 0) + dailyIncome
-    }).eq('id', product.id);
-
-    // Transaction record with product id so we can check duplicate
-    await supabase.from('transactions').insert([{
-      user_id: user.id,
-      type: 'income',
-      amount: dailyIncome,
-      description: `Daily income ${product.package_name || product.product_name} | ProductID:${product.id} | Date:${todayUganda}`
-    }]);
-
-    credited++;
-    total += dailyIncome;
+  if (prodErr) {
+    console.error('Failed to fetch products:', prodErr.message);
+    return new Response(
+      JSON.stringify({ error: 'Failed to fetch products', details: prodErr.message }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
   }
 
-  console.log(`DONE: ${credited} users paid, total UGX ${total} for ${todayUganda}`);
+  console.log(`[daily-income-scheduler] Processing ${(products ?? []).length} active products`);
 
-  return new Response(JSON.stringify({ 
-    success: true, 
-    date: todayUganda,
-    credited, 
-    total 
-  }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-}); 
+  for (const product of (products ?? []) as Product[]) {
+    const expiry = new Date(product.expiry_date);
+    if (now > expiry) {
+      const { error } = await supabase
+        .from('engle_products')
+        .update({ status: 'expired' })
+        .eq('id', product.id);
+      if (error) errors.push(`Expire ${product.id}: ${error.message}`);
+      else console.log(`[daily-income-scheduler] Expired product ${product.id}`);
+      continue;
+    }
+
+    const lastIncome = product.last_income_date ? new Date(product.last_income_date) : null;
+    const hoursSinceLast = lastIncome
+      ? (now.getTime() - lastIncome.getTime()) / (1000 * 60 * 60)
+      : 25;
+
+    if (hoursSinceLast < 24) {
+      console.log(`[daily-income-scheduler] Skipping product ${product.id} — only ${hoursSinceLast.toFixed(1)}h since last income`);
+      continue;
+    }
+
+    const { data: userData, error: userErr } = await supabase
+      .from('engle_users')
+      .select('id, balance, total_earnings, daily_earnings')
+      .eq('id', product.user_id)
+      .single();
+
+    if (userErr || !userData) {
+      errors.push(`User ${product.user_id} not found: ${userErr?.message ?? 'null'}`);
+      continue;
+    }
+
+    const user = userData as User;
+
+    const { error: userUpdateErr } = await supabase
+      .from('engle_users')
+      .update({
+        balance: user.balance + product.daily_income,
+        total_earnings: user.total_earnings + product.daily_income,
+        daily_earnings: user.daily_earnings + product.daily_income,
+      })
+      .eq('id', user.id);
+
+    if (userUpdateErr) {
+      errors.push(`Update user ${user.id}: ${userUpdateErr.message}`);
+      continue;
+    }
+
+    const { error: productUpdateErr } = await supabase
+      .from('engle_products')
+      .update({
+        last_income_date: now.toISOString(),
+        total_income_earned: product.total_income_earned + product.daily_income,
+      })
+      .eq('id', product.id);
+
+    if (productUpdateErr) {
+      errors.push(`Update product ${product.id}: ${productUpdateErr.message}`);
+      continue;
+    }
+
+    const { error: notifErr } = await supabase
+      .from('engle_notifications')
+      .insert({
+        user_id: user.id,
+        type: 'daily_income',
+        title: 'Daily Income Received',
+        message: `You earned UGX ${product.daily_income.toLocaleString()} from ${product.package_name}`,
+        is_read: false,
+      });
+
+    if (notifErr) {
+      console.warn(`Notification for user ${user.id} failed: ${notifErr.message}`);
+    }
+
+    credited += 1;
+    total += product.daily_income;
+    console.log(`[daily-income-scheduler] Credited UGX ${product.daily_income} to user ${user.id} for product ${product.id}`);
+  }
+
+  const result = {
+    success: true,
+    timestamp: now.toISOString(),
+    credited,
+    total,
+    errors: errors.length > 0 ? errors : undefined,
+  };
+
+  console.log(`[daily-income-scheduler] Done — credited: ${credited}, total: UGX ${total}, errors: ${errors.length}`);
+
+  return new Response(
+    JSON.stringify(result),
+    { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+  );
+});
