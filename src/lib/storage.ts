@@ -1,6 +1,5 @@
-import { supabase } from '@/lib/supabase';
+import { supabase } from './supabase';
 import type { User, UserProduct, Recharge, Withdrawal, Wallet, RedeemCode, Notification } from '@/types';
-export { startRechargePayment } from '@/lib/recharge';
 
 // ─── Session helpers ────────────────────────────────────────────────────────
 
