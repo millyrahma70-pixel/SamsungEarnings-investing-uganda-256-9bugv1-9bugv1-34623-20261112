@@ -1,0 +1,20 @@
+.home-dashboard-layout { color: hsl(var(--foreground)); }
+.home-balance { background: linear-gradient(135deg, hsl(var(--brand-navy)), hsl(var(--primary))); }
+.home-control { transition: transform 180ms ease, opacity 180ms ease; }
+.home-control:hover:not(:disabled) { opacity: .85; }
+.home-control:active:not(:disabled) { transform: scale(.98); }
+.home-control:focus-visible { outline: 3px solid hsl(var(--ring)); outline-offset: 3px; }
+.home-control:disabled { opacity: .7; }
+.home-notifications { animation: home-disclosure 180ms ease-out; }
+@keyframes home-disclosure {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (min-width: 1024px) {
+  .home-dashboard-layout > .app-container { max-width: 1120px; }
+  .home-dashboard-layout > .app-container > .fixed { max-width: 1120px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-control { transition: none; }
+  .home-notifications { animation: none; }
+}
